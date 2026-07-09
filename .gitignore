@@ -1,0 +1,8 @@
+deepseek_config.json
+deepseek_config.json.tmp
+__pycache__/
+*.pyc
+
+*.md
+*.MD
+!README.md
