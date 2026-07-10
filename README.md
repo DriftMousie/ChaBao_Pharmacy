@@ -47,7 +47,7 @@ requirements.txt
 
 ```bash
 # 克隆仓库
-git clone https://github.com/你的用户名/ChaBao_Pharmacy.git
+git clone https://github.com/DriftMousie/ChaBao_Pharmacy.git
 
 # 进入项目目录
 cd ChaBao_Pharmacy
