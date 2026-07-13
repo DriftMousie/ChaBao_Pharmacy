@@ -7,7 +7,8 @@ import re
 
 
 SUPPORTED_SUFFIXES = {".xlsx", ".csv"}
-RESULT_MARKERS = ("比对结果", "医保销售比对", "医保处方比对")
+LEGACY_SPREADSHEET_SUFFIXES = {".xls", ".xlsm", ".xlsb"}
+RESULT_MARKERS = ("比对结果", "医保销售比对", "医保处方比对", "退货冲销检查")
 RESOURCE_DIR_NAME = "resources"
 DEFAULT_CATALOG_NAME = "处方药目录.xlsx"
 
@@ -19,16 +20,42 @@ class FileInventory:
     prescription: list[Path]
     catalog: list[Path]
     configs: list[Path]
+    return_results: list[Path]
+    sales_medical_results: list[Path]
+    prescription_medical_results: list[Path]
+    unsupported_spreadsheets: list[Path]
 
 
 def discover_files(workspace: Path) -> FileInventory:
     """只扫描工作目录顶层，避免智能体读取用户未授权的其他目录。"""
+    top_level_files = [path for path in workspace.iterdir() if path.is_file()]
+    unsupported_spreadsheets = [
+        path
+        for path in top_level_files
+        if path.suffix.lower() in LEGACY_SPREADSHEET_SUFFIXES
+    ]
+    supported_files = [
+        path
+        for path in top_level_files
+        if path.suffix.lower() in SUPPORTED_SUFFIXES
+    ]
+    return_results = [path for path in supported_files if "退货冲销检查" in path.stem]
+    sales_medical_results = [
+        path
+        for path in supported_files
+        if "医保销售比对" in path.stem
+        or ("销售医保" in path.stem and "比对" in path.stem)
+    ]
+    prescription_medical_results = [
+        path
+        for path in supported_files
+        if "医保处方比对" in path.stem
+        or ("处方医保" in path.stem and "比对" in path.stem)
+    ]
     files = [
         path
-        for path in workspace.iterdir()
-        if path.is_file()
-        and path.suffix.lower() in SUPPORTED_SUFFIXES
-        and not any(marker in path.stem for marker in RESULT_MARKERS)
+        for path in supported_files
+        if not any(marker in path.stem for marker in RESULT_MARKERS)
     ]
     configs = [path for path in files if "列名配置" in path.stem]
     catalogs = [path for path in files if "处方药目录" in path.stem]
@@ -52,7 +79,17 @@ def discover_files(workspace: Path) -> FileInventory:
         and path not in prescription
         and path.suffix.lower() == ".xlsx"
     ]
-    return FileInventory(sales, medical, prescription, catalogs, configs)
+    return FileInventory(
+        sales,
+        medical,
+        prescription,
+        catalogs,
+        configs,
+        return_results,
+        sales_medical_results,
+        prescription_medical_results,
+        unsupported_spreadsheets,
+    )
 
 
 def infer_pharmacy_name(*paths: Path) -> str:

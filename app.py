@@ -100,6 +100,28 @@ def _initialize_state() -> None:
             )
 
 
+def _recover_stale_processing_state() -> None:
+    """新一轮脚本运行时清理上一次被中断后遗留的执行锁。"""
+    if not st.session_state.get("is_processing", False) or st.session_state.get(
+        "queued_submission"
+    ):
+        return
+    st.session_state.is_processing = False
+    session = st.session_state.get("agent_session")
+    if session is not None:
+        session.is_processing = False
+    st.session_state.chat_messages.append(
+        {
+            "role": "assistant",
+            "content": (
+                "检测到上一次任务留下的执行状态，输入框已经恢复。"
+                "如果结果文件已经生成，可以输入“查看当前文件”；否则请重新执行任务。"
+            ),
+            "output_files": [],
+        }
+    )
+
+
 def _render_message(message: dict) -> None:
     avatar = ASSISTANT_AVATAR if message["role"] == "assistant" else None
     with st.chat_message(message["role"], avatar=avatar):
@@ -126,6 +148,7 @@ st.markdown(
 )
 
 _initialize_state()
+_recover_stale_processing_state()
 st.markdown(
     f"""
     <div class="chabao-title">
@@ -214,6 +237,33 @@ is_processing = bool(st.session_state.get("is_processing", False))
 if is_processing:
     st.warning("正在执行数据处理，请不要关闭窗口，也不要重复提交指令。大文件可能需要几分钟，完成后我会显示结果文件。", icon="⏳")
 
+queued_submission = st.session_state.pop("queued_submission", None)
+if queued_submission:
+    user_text = queued_submission["user_text"]
+    result = None
+    try:
+        with st.status("正在执行数据处理，请勿重复提交。大文件可能需要几分钟...", expanded=True) as status:
+            st.write("请保持此窗口打开。任务完成后，我会显示结果文件和下一步建议。")
+            agent = InspectionAgent(WORKSPACE, api_key.strip(), st.session_state.agent_session)
+            reply, result = agent.handle(user_text, ignore_processing_lock=True)
+            # 最近十轮问答进入智能体短期记忆，下一次判断会结合上下文。
+            st.session_state.agent_session.remember(user_text, reply)
+            status.update(label="处理完成", state="complete", expanded=False)
+    except Exception as exc:
+        reply = f"任务执行时出现异常：{exc}。请检查输入文件后重试。"
+    finally:
+        st.session_state.agent_session.is_processing = False
+        st.session_state.is_processing = False
+
+    st.session_state.chat_messages.append(
+        {
+            "role": "assistant",
+            "content": reply,
+            "output_files": [str(path) for path in result.output_files] if result else [],
+        }
+    )
+    st.rerun()
+
 submission = st.chat_input(
     "正在执行任务，请等待完成..." if is_processing else "输入需求或附加 Excel/CSV 文件",
     accept_file="multiple",
@@ -237,32 +287,7 @@ if submission:
         {"role": "user", "content": shown_text, "output_files": []}
     )
 
-    if not api_key_is_valid:
-        reply = "DeepSeek API Key 尚未通过验证，请检查页面顶部的提示。"
-        result = None
-    else:
-        st.session_state.is_processing = True
-        st.session_state.agent_session.is_processing = True
-        try:
-            with st.status("正在执行数据处理，请勿重复提交。大文件可能需要几分钟...", expanded=True) as status:
-                st.write("请保持此窗口打开。任务完成后，我会显示结果文件和下一步建议。")
-                agent = InspectionAgent(WORKSPACE, api_key.strip(), st.session_state.agent_session)
-                reply, result = agent.handle(user_text, ignore_processing_lock=True)
-                # 最近十轮问答进入智能体短期记忆，下一次判断会结合上下文。
-                st.session_state.agent_session.remember(user_text, reply)
-                status.update(label="处理完成", state="complete", expanded=False)
-        except Exception as exc:
-            reply = f"任务执行时出现异常：{exc}。请检查输入文件后重试。"
-            result = None
-        finally:
-            st.session_state.agent_session.is_processing = False
-            st.session_state.is_processing = False
-
-    st.session_state.chat_messages.append(
-        {
-            "role": "assistant",
-            "content": reply,
-            "output_files": [str(path) for path in result.output_files] if result else [],
-        }
-    )
+    st.session_state.queued_submission = {"user_text": user_text}
+    st.session_state.is_processing = True
+    st.session_state.agent_session.is_processing = True
     st.rerun()

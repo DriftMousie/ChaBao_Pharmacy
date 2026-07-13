@@ -166,6 +166,8 @@ class InspectionAgent:
 
     def _contextual_guidance(self) -> str:
         inventory = discover_files(self.workspace)
+        if inventory.sales_medical_results and inventory.prescription_medical_results:
+            return "销售医保比对和处方医保比对结果均已生成，建议查看结果并进行人工复核。"
         if not inventory.configs:
             return "当前还没有列名配置，建议先说“生成列名配置”。"
         if self.session.return_output and self.session.return_output.exists():
@@ -190,9 +192,14 @@ class InspectionAgent:
         has_medical = bool(inventory.medical)
         has_prescription = bool(inventory.prescription)
         has_catalog = bool(inventory.catalog)
+        has_sales_result = bool(inventory.sales_medical_results)
+        has_prescription_result = bool(inventory.prescription_medical_results)
         has_return_output = bool(
             self.session.return_output is not None and self.session.return_output.exists()
         )
+
+        if has_sales_result and has_prescription_result:
+            return "可直接输入：“查看当前文件”。"
 
         if not has_config:
             return "可直接输入：“生成列名配置”。"
@@ -202,7 +209,7 @@ class InspectionAgent:
             for word in ("列名配置修改好了", "列名配置改好了", "配置修改好了", "配置改好了", "直接使用")
         )
 
-        if has_return_output and has_medical:
+        if has_return_output and has_medical and not has_sales_result:
             return "可直接输入：“进行销售医保比对”。"
         if self.session.last_operation == "return_offset":
             return "可直接输入：“查看当前文件”。"
@@ -212,11 +219,19 @@ class InspectionAgent:
             return "可直接输入：“执行退货冲销检查”。"
         if self.session.last_operation == "create_config":
             return "可直接输入：“我的列名配置修改好了”。"
-        if self.session.last_operation == "sales_medical":
-            if has_prescription and has_medical and has_catalog and has_config:
+        if self.session.last_operation == "sales_medical" or has_sales_result:
+            if (
+                not has_prescription_result
+                and has_prescription
+                and has_medical
+                and has_catalog
+                and has_config
+            ):
                 return "可直接输入：“进行处方医保比对”。"
             return "可直接输入：“查看当前文件”。"
-        if self.session.last_operation == "prescription_medical":
+        if self.session.last_operation == "prescription_medical" or has_prescription_result:
+            if not has_sales_result and has_sales and has_medical and has_config:
+                return "可直接输入：“进行销售医保比对”。"
             return "可直接输入：“查看当前文件”。"
         if has_sales and has_config:
             return "可直接输入：“执行退货冲销检查”。"
@@ -227,6 +242,13 @@ class InspectionAgent:
         return "可直接输入：“还缺少哪些材料”。"
 
     def _append_next_input_suggestion(self, reply: str) -> str:
+        inventory = discover_files(self.workspace)
+        if (
+            inventory.sales_medical_results
+            and inventory.prescription_medical_results
+            and "销售医保比对和处方医保比对均已完成" not in reply
+        ):
+            reply += "\n\n当前状态：销售医保比对和处方医保比对均已完成。"
         suggestion = self._next_input_suggestion()
         if suggestion in reply:
             return reply
@@ -251,7 +273,7 @@ class InspectionAgent:
         if error:
             return error
         try:
-            load_column_config(config)
+            load_column_config(config) # type: ignore
         except Exception as exc:
             return f"我找到了配置表，但暂时无法读取：{exc} 请检查配置表结构。"
         self.session.last_operation = "config_ready"
@@ -266,10 +288,30 @@ class InspectionAgent:
             ("处方端候选", inventory.prescription),
             ("处方药目录", inventory.catalog),
             ("列名配置", inventory.configs),
+            ("退货冲销结果", inventory.return_results),
+            ("销售医保比对结果", inventory.sales_medical_results),
+            ("处方医保比对结果", inventory.prescription_medical_results),
         ):
             value = "、".join(path.name for path in paths) or "无"
             lines.append(f"- {label}：{value}")
+        format_hint = self._unsupported_format_hint(inventory)
+        if format_hint:
+            lines.append(f"\n{format_hint}")
         return "\n".join(lines)
+
+    @staticmethod
+    def _unsupported_format_hint(inventory) -> str:
+        if not inventory.unsupported_spreadsheets:
+            return ""
+        names = "、".join(path.name for path in inventory.unsupported_spreadsheets)
+        return (
+            f"另外发现暂不支持的表格：{names}。当前只识别 `.xlsx` 和 `.csv`；"
+            "请用 Excel 打开后另存为 `.xlsx`，再重新检查文件。"
+        )
+
+    def _with_format_hint(self, message: str, inventory) -> str:
+        hint = self._unsupported_format_hint(inventory)
+        return f"{message}\n\n{hint}" if hint else message
 
     @staticmethod
     def _one_file(paths: list[Path], label: str) -> tuple[Path | None, str | None]:
@@ -295,16 +337,16 @@ class InspectionAgent:
         inventory = discover_files(self.workspace)
         sales, error = self._one_file(inventory.sales, "销售端 Excel")
         if error:
-            return error
+            return self._with_format_hint(error, inventory)
         config, error = self._one_file(inventory.configs, "列名配置")
         if error:
             return error
-        pharmacy = infer_pharmacy_name(sales)
+        pharmacy = infer_pharmacy_name(sales) # type: ignore
         output = unique_output_path(self.workspace, pharmacy, "退货冲销检查", ".xlsx")
         self.session.pending_action = PendingAction(
             "return_offset",
-            {"input_path": sales, "output_path": output, "config_path": config},
-            f"使用 {sales.name} 执行退货冲销检查",
+            {"input_path": sales, "output_path": output, "config_path": config}, # type: ignore
+            f"使用 {sales.name} 执行退货冲销检查", # type: ignore
         )
         return f"准备执行：{self.session.pending_action.summary}。回复“确认”开始。"
 
@@ -318,14 +360,14 @@ class InspectionAgent:
         else:
             sales_path, error = self._one_file(inventory.sales, "销售端 Excel")
             if error:
-                return error
+                return self._with_format_hint(error, inventory)
         medical, error = self._one_file(inventory.medical, "医保端 CSV")
         if error:
-            return error
+            return self._with_format_hint(error, inventory)
         config, error = self._one_file(inventory.configs, "列名配置")
         if error:
             return error
-        pharmacy = infer_pharmacy_name(sales_path)
+        pharmacy = infer_pharmacy_name(sales_path) # pyright: ignore[reportArgumentType]
         output = unique_output_path(self.workspace, pharmacy, "医保销售比对", ".xlsx")
         self.session.pending_action = PendingAction(
             "sales_medical",
@@ -334,8 +376,8 @@ class InspectionAgent:
                 "medical_path": medical,
                 "output_path": output,
                 "config_path": config,
-            },
-            f"使用 {sales_path.name} 与 {medical.name} 进行销售医保比对",
+            }, # type: ignore
+            f"使用 {sales_path.name} 与 {medical.name} 进行销售医保比对", # type: ignore
         )
         if not using_return_result and "skip_return_offset" not in self.session.warnings_shown:
             self.session.warnings_shown.add("skip_return_offset")
@@ -343,23 +385,29 @@ class InspectionAgent:
                 "当前销售文件还没有在本次会话中完成退货冲销检查。先筛除冲销记录通常能让比对更准确。"
                 "如果您仍希望直接比对，请回复“继续执行”；如果先做冲销，请说“执行冲销检查”。"
             )
+        if using_return_result:
+            return (
+                f"准备执行：{self.session.pending_action.summary}。"
+                "开始前请确认您已手工删除“冲销编号”不为空的行，只保留未参与冲销的数据。"
+                "确认已完成后，回复“确认”开始。"
+            )
         return f"准备执行：{self.session.pending_action.summary}。回复“确认”开始。"
 
     def _prepare_prescription_compare(self) -> str:
         inventory = discover_files(self.workspace)
         prescription, error = self._one_file(inventory.prescription, "处方端 Excel")
         if error:
-            return error
+            return self._with_format_hint(error, inventory)
         medical, error = self._one_file(inventory.medical, "医保端 CSV")
         if error:
-            return error
+            return self._with_format_hint(error, inventory)
         catalog, error = self._one_file(inventory.catalog, "处方药目录")
         if error:
-            return error
+            return self._with_format_hint(error, inventory)
         config, error = self._one_file(inventory.configs, "列名配置")
         if error:
             return error
-        pharmacy = infer_pharmacy_name(medical, prescription)
+        pharmacy = infer_pharmacy_name(medical, prescription) # type: ignore
         output = unique_output_path(self.workspace, pharmacy, "医保处方比对", ".csv")
         self.session.pending_action = PendingAction(
             "prescription_medical",
@@ -369,7 +417,7 @@ class InspectionAgent:
                 "catalog_path": catalog,
                 "output_path": output,
                 "config_path": config,
-            },
+            }, # type: ignore
             "执行处方医保匹配并继续完成处方药目录判断",
         )
         return f"准备执行：{self.session.pending_action.summary}。回复“确认”开始。"

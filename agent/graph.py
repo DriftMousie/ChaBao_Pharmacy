@@ -75,6 +75,10 @@ def _fallback_intent(text: str) -> IntentName:
         return "prescription_medical"
     if "销售" in text and "医保" in text:
         return "sales_medical"
+    if any(word in text for word in ("拷贝", "复制", "放好")) and any(
+        word in text for word in ("数据", "文件", "表格", "材料")
+    ):
+        return "list_files"
     if "文件" in text or "材料" in text:
         return "list_files"
     return "help"
