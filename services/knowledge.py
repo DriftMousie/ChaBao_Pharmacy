@@ -47,7 +47,7 @@ class KnowledgeBase:
         terms = {normalized}
         keywords = (
             "列名配置", "销售端", "医保端", "处方端", "处方药", "冲销",
-            "销售医保", "处方医保", "文件", "字段", "错误", "密钥", "流程",
+            "销售医保", "串换", "医保销售明细", "处方医保", "文件", "字段", "错误", "密钥", "流程",
             "完全匹配", "不完全匹配", "械字号", "消字号",
         )
         terms.update(keyword for keyword in keywords if keyword in normalized)

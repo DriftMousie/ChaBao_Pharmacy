@@ -8,7 +8,14 @@ import re
 
 SUPPORTED_SUFFIXES = {".xlsx", ".csv"}
 LEGACY_SPREADSHEET_SUFFIXES = {".xls", ".xlsm", ".xlsb"}
-RESULT_MARKERS = ("比对结果", "医保销售比对", "医保处方比对", "退货冲销检查")
+RESULT_MARKERS = (
+    "比对结果",
+    "医保销售比对",
+    "医保处方比对",
+    "退货冲销检查",
+    "销售医保药品串换疑点筛查",
+    "医保销售明细筛查",
+)
 RESOURCE_DIR_NAME = "resources"
 DEFAULT_CATALOG_NAME = "处方药目录.xlsx"
 
@@ -22,6 +29,7 @@ class FileInventory:
     configs: list[Path]
     return_results: list[Path]
     sales_medical_results: list[Path]
+    medical_sales_detail_results: list[Path]
     prescription_medical_results: list[Path]
     unsupported_spreadsheets: list[Path]
 
@@ -43,8 +51,12 @@ def discover_files(workspace: Path) -> FileInventory:
     sales_medical_results = [
         path
         for path in supported_files
-        if "医保销售比对" in path.stem
+        if "销售医保药品串换疑点筛查" in path.stem
+        or "医保销售比对" in path.stem
         or ("销售医保" in path.stem and "比对" in path.stem)
+    ]
+    medical_sales_detail_results = [
+        path for path in supported_files if "医保销售明细筛查" in path.stem
     ]
     prescription_medical_results = [
         path
@@ -87,6 +99,7 @@ def discover_files(workspace: Path) -> FileInventory:
         configs,
         return_results,
         sales_medical_results,
+        medical_sales_detail_results,
         prescription_medical_results,
         unsupported_spreadsheets,
     )

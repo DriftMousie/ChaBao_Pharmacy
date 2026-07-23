@@ -55,6 +55,14 @@ class AgentCoreTests(unittest.TestCase):
 
     def test_fallback_intents(self) -> None:
         self.assertEqual(_fallback_intent("我要做销售医保比对"), "sales_medical")
+        self.assertEqual(
+            _fallback_intent("进行销售医保药品串换疑点筛查"),
+            "sales_medical",
+        )
+        self.assertEqual(
+            _fallback_intent("进行医保销售明细筛查"),
+            "medical_sales_detail",
+        )
         self.assertEqual(_fallback_intent("检查处方和医保"), "prescription_medical")
         self.assertEqual(_fallback_intent("确认开始"), "confirm")
         self.assertEqual(_fallback_intent("列名配置里面有什么"), "knowledge")
@@ -96,11 +104,13 @@ class AgentCoreTests(unittest.TestCase):
         config_step = agent._next_step_for("create_config")
         return_step = agent._next_step_for("return_offset")
         sales_step = agent._next_step_for("sales_medical")
+        detail_step = agent._next_step_for("medical_sales_detail")
         prescription_step = agent._next_step_for("prescription_medical")
         self.assertIn("用户录入列名", config_step)
         self.assertIn("冲销编号", return_step)
         self.assertIn("手工操作", return_step)
         self.assertIn("未匹配", sales_step)
+        self.assertIn("比对时间差", detail_step)
         self.assertIn("先药后方", prescription_step)
 
     def test_session_remembers_only_latest_ten_rounds(self) -> None:
@@ -272,6 +282,7 @@ class AgentCoreTests(unittest.TestCase):
             for name in (
                 "常春堂_退货冲销检查_2026071110.xlsx",
                 "常春堂_医保销售比对_2026071110.xlsx",
+                "常春堂_医保销售明细筛查_2026071110.csv",
                 "常春堂_医保处方比对_2026071111.csv",
                 "常春堂销售端.xls",
             ):
@@ -279,6 +290,7 @@ class AgentCoreTests(unittest.TestCase):
             inventory = discover_files(root)
             self.assertEqual(len(inventory.return_results), 1)
             self.assertEqual(len(inventory.sales_medical_results), 1)
+            self.assertEqual(len(inventory.medical_sales_detail_results), 1)
             self.assertEqual(len(inventory.prescription_medical_results), 1)
             self.assertEqual([path.name for path in inventory.unsupported_spreadsheets], ["常春堂销售端.xls"])
             self.assertEqual(inventory.sales, [])
@@ -287,12 +299,13 @@ class AgentCoreTests(unittest.TestCase):
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             (root / "常春堂_医保销售比对_2026071110.xlsx").touch()
+            (root / "常春堂_医保销售明细筛查_2026071110.csv").touch()
             (root / "常春堂_医保处方比对_2026071111.csv").touch()
             agent = InspectionAgent(root, "test-key", AgentSession(last_operation="prescription_medical"))
             reply = agent._append_next_input_suggestion("处方端医保端综合比对完成。")
-            self.assertIn("销售医保比对和处方医保比对均已完成", reply)
+            self.assertIn("三项筛查均已完成", reply)
             self.assertIn("查看当前文件", reply)
-            self.assertNotIn("下一步可输入：“进行销售医保比对”", reply)
+            self.assertNotIn("下一步可输入：“进行销售医保药品串换疑点筛查”", reply)
 
     def test_legacy_xls_is_reported_when_expected_file_is_missing(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -328,11 +341,11 @@ class AgentCoreTests(unittest.TestCase):
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             now = datetime(2026, 7, 8, 14, 35)
-            first = unique_output_path(root, "平民药房", "医保销售比对", ".xlsx", now)
+            first = unique_output_path(root, "平民药房", "销售医保药品串换疑点筛查", ".xlsx", now)
             first.touch()
-            second = unique_output_path(root, "平民药房", "医保销售比对", ".xlsx", now)
-            self.assertEqual(first.name, "平民药房_医保销售比对_2026070814.xlsx")
-            self.assertEqual(second.name, "平民药房_医保销售比对_2026070814_2.xlsx")
+            second = unique_output_path(root, "平民药房", "销售医保药品串换疑点筛查", ".xlsx", now)
+            self.assertEqual(first.name, "平民药房_销售医保药品串换疑点筛查_2026070814.xlsx")
+            self.assertEqual(second.name, "平民药房_销售医保药品串换疑点筛查_2026070814_2.xlsx")
 
     def test_pharmacy_name_fallback(self) -> None:
         self.assertEqual(infer_pharmacy_name(Path("平民健康药房销售端.xlsx")), "平民健康药房")
@@ -359,6 +372,21 @@ class AgentCoreTests(unittest.TestCase):
             self.assertIn("还没有在本次会话中完成退货冲销", reply)
             self.assertIsNotNone(agent.session.pending_action)
             self.assertEqual(agent.session.pending_action.name, "sales_medical") # type: ignore
+
+    def test_medical_sales_detail_screen_prepares_independent_action(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "平民药房销售端.xlsx").touch()
+            (root / "平民药房医保端.csv").touch()
+            create_column_config_template(root / "列名配置.xlsx")
+            agent = InspectionAgent(root, "test-key", AgentSession())
+            reply = agent._prepare_medical_sales_detail_screen()
+            self.assertIn("同名且时间误差不超过 1 分钟", reply)
+            self.assertIsNotNone(agent.session.pending_action)
+            self.assertEqual(
+                agent.session.pending_action.name, # type: ignore
+                "medical_sales_detail",
+            )
 
     def test_missing_column_error_is_readable(self) -> None:
         error = explain_exception(ValueError("输入表缺少必要列：流水号"), "销售医保比对")

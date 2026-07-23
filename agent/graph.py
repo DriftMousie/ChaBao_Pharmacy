@@ -27,6 +27,7 @@ IntentName = Literal[
     "create_config",
     "return_offset",
     "sales_medical",
+    "medical_sales_detail",
     "prescription_medical",
     "list_files",
     "knowledge",
@@ -71,8 +72,12 @@ def _fallback_intent(text: str) -> IntentName:
         return "create_config"
     if "冲销" in text or "退货" in text:
         return "return_offset"
+    if "医保销售明细" in text or ("明细" in text and "医保" in text and "销售" in text):
+        return "medical_sales_detail"
     if "处方" in text:
         return "prescription_medical"
+    if "串换" in text:
+        return "sales_medical"
     if "销售" in text and "医保" in text:
         return "sales_medical"
     if any(word in text for word in ("拷贝", "复制", "放好")) and any(

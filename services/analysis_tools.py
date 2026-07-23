@@ -5,6 +5,7 @@ from pathlib import Path
 from models.results import ToolResult
 from pharmacy_analysis import (
     create_column_config_template,
+    run_medical_sales_detail_screen,
     run_prescription_medical_compare,
     run_return_offset_check,
     run_sales_medical_compare,
@@ -51,7 +52,7 @@ def compare_sales(
         return ToolResult(
             True,
             "sales_medical",
-            "销售端与医保端比对完成。",
+            "销售医保药品串换疑点筛查完成。",
             statistics={
                 "医保编号数": result.medical_bill_count,
                 "匹配编号数": result.matched_bill_count,
@@ -61,8 +62,43 @@ def compare_sales(
             output_files=[result.output_path],
         )
     except Exception as exc:
-        error = explain_exception(exc, "销售医保比对")
+        error = explain_exception(exc, "销售医保药品串换疑点筛查")
         return ToolResult(False, "sales_medical", error.user_message, warnings=error.suggestions)
+
+
+def screen_medical_sales_details(
+    sales_path: Path,
+    medical_path: Path,
+    output_path: Path,
+    config_path: Path,
+) -> ToolResult:
+    try:
+        result = run_medical_sales_detail_screen(
+            sales_path,
+            medical_path,
+            output_path,
+            config_path,
+        )
+        return ToolResult(
+            True,
+            "medical_sales_detail",
+            "医保销售明细筛查完成。",
+            statistics={
+                "医保明细数": result.total_rows,
+                "完全匹配": result.exact_rows,
+                "不完全匹配": result.incomplete_rows,
+                "未匹配": result.unmatched_rows,
+            },
+            output_files=[result.output_path],
+        )
+    except Exception as exc:
+        error = explain_exception(exc, "医保销售明细筛查")
+        return ToolResult(
+            False,
+            "medical_sales_detail",
+            error.user_message,
+            warnings=error.suggestions,
+        )
 
 
 def compare_prescriptions(
@@ -97,4 +133,3 @@ def compare_prescriptions(
     except Exception as exc:
         error = explain_exception(exc, "处方医保综合比对")
         return ToolResult(False, "prescription_medical", error.user_message, warnings=error.suggestions)
-

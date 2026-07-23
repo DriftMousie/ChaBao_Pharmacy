@@ -15,7 +15,8 @@ DEFAULT_INPUT_FILE = "松鹤堂196分店销售明细.xlsx"
 DEFAULT_OUTPUT_FILE = "松鹤堂196分店销售明细_退货冲销检查.xlsx"
 DEFAULT_COMPARE_SALES_FILE = "万众药房销售端.xlsx"
 DEFAULT_COMPARE_MEDICAL_FILE = "万众药房医保端.csv"
-DEFAULT_COMPARE_OUTPUT_FILE = "万众药房销售医保比对结果.xlsx"
+DEFAULT_COMPARE_OUTPUT_FILE = "万众药房销售医保药品串换疑点筛查结果.xlsx"
+DEFAULT_DETAIL_SCREEN_OUTPUT_FILE = "万众药房医保销售明细筛查结果.csv"
 DEFAULT_PRESCRIPTION_FILE = "松鹤堂处方明细.xlsx"
 DEFAULT_PRESCRIPTION_MEDICAL_FILE = "松鹤堂医保端.csv"
 DEFAULT_PRESCRIPTION_COMPARE_OUTPUT_FILE = "松鹤堂处方医保及处方药比对结果.csv"
@@ -60,6 +61,12 @@ THIRD_COMPARE_AMOUNT_TOLERANCE = 0.01
 THIRD_COMPARE_PRODUCT_SIMILARITY_THRESHOLD = 0.75
 PRESCRIPTION_COMPARE_TIME_TOLERANCE_HOURS = 1
 PRESCRIPTION_PRODUCT_SIMILARITY_THRESHOLD = 0.75
+DETAIL_GROUP_TIME_TOLERANCE_MINUTES = 1
+DETAIL_EXACT_TIME_TOLERANCE_HOURS = 0.5
+DETAIL_INCOMPLETE_TIME_TOLERANCE_HOURS = 24
+DETAIL_EXACT_AMOUNT_TOLERANCE = 0.01
+DETAIL_INCOMPLETE_AMOUNT_TOLERANCE = 2
+DETAIL_PRODUCT_SIMILARITY_THRESHOLD = 0.75
 PROGRESS_UPDATE_STEPS = 20
 MATCH_STATUS_EXACT = "完全匹配"
 MATCH_STATUS_INCOMPLETE = "不完全匹配"
@@ -77,6 +84,7 @@ PRESCRIPTION_MATCH_OUTPUT_COLUMNS = [
     "处方情况",
     "相差时间",
 ]
+DETAIL_SCREEN_OUTPUT_COLUMNS = ["比对结果", "比对时间差", "比对金额差"]
 
 COMPARE_OUTPUT_COLUMNS = [
     "医保端编号",
@@ -134,6 +142,25 @@ class PrescriptionMedicalCompareResult:
 
 
 @dataclass(frozen=True)
+class MedicalSalesDetailScreenResult:
+    output_path: Path
+    total_rows: int
+    exact_rows: int
+    incomplete_rows: int
+    unmatched_rows: int
+
+
+@dataclass(frozen=True)
+class DetailMatchGroup:
+    name: str
+    normalized_name: str
+    event_time: pd.Timestamp
+    total_amount: float
+    row_indices: tuple[object, ...]
+    source_order: int
+
+
+@dataclass(frozen=True)
 class ColumnConfig:
     sales_bill_date: str = COL_BILL_DATE
     sales_product_name: str = COL_PRODUCT_NAME
@@ -188,6 +215,22 @@ class ColumnConfig:
         ]
 
     @property
+    def sales_detail_screen_required_columns(self) -> list[str]:
+        return [
+            self.sales_product_name,
+            self.sales_bill_date,
+            self.sales_price,
+        ]
+
+    @property
+    def medical_detail_screen_required_columns(self) -> list[str]:
+        return [
+            self.medical_product_name,
+            self.medical_settlement_time,
+            self.medical_amount,
+        ]
+
+    @property
     def prescription_medical_required_columns(self) -> list[str]:
         return [
             self.medical_person_name,
@@ -212,21 +255,21 @@ COLUMN_CONFIG_FIELDS: dict[str, tuple[str, str, str, str, str]] = {
         "销售端",
         "销售时间",
         ColumnConfig.sales_bill_date,
-        "退货冲销检查、销售端与医保端比对",
+        "退货冲销检查、销售医保药品串换疑点筛查、医保销售明细筛查",
         "如果销售端只有日期，程序会按同一天匹配；如果有时分秒，按小时误差规则匹配。",
     ),
     "sales_product_name": (
         "销售端",
         "商品名称",
         ColumnConfig.sales_product_name,
-        "退货冲销检查、销售端与医保端比对",
+        "退货冲销检查、销售医保药品串换疑点筛查、医保销售明细筛查",
         "",
     ),
     "sales_price": (
         "销售端",
         "销售单价",
         ColumnConfig.sales_price,
-        "退货冲销检查",
+        "退货冲销检查、医保销售明细筛查",
         "",
     ),
     "sales_quantity": (
@@ -240,14 +283,14 @@ COLUMN_CONFIG_FIELDS: dict[str, tuple[str, str, str, str, str]] = {
         "销售端",
         "销售金额",
         ColumnConfig.sales_amount,
-        "退货冲销检查、销售端与医保端比对",
+        "退货冲销检查、销售医保药品串换疑点筛查",
         "",
     ),
     "sales_approval_no": (
         "销售端",
         "批准文号",
         ColumnConfig.sales_approval_no,
-        "退货冲销检查、销售端与医保端比对",
+        "退货冲销检查、销售医保药品串换疑点筛查",
         "",
     ),
     "sales_offset_id": (
@@ -261,49 +304,49 @@ COLUMN_CONFIG_FIELDS: dict[str, tuple[str, str, str, str, str]] = {
         "销售端",
         "销售单号/流水号",
         ColumnConfig.sales_order_id,
-        "销售端与医保端比对",
+        "销售医保药品串换疑点筛查",
         "",
     ),
     "medical_visit_id": (
         "医保端",
         "就诊 ID",
         ColumnConfig.medical_visit_id,
-        "销售端与医保端比对",
+        "销售医保药品串换疑点筛查",
         "",
     ),
     "medical_product_name": (
         "医保端",
         "医保商品名称",
         ColumnConfig.medical_product_name,
-        "销售端与医保端比对、处方端与医保端比对",
+        "销售医保药品串换疑点筛查、医保销售明细筛查、处方端与医保端比对",
         "",
     ),
     "medical_quantity": (
         "医保端",
         "医保数量",
         ColumnConfig.medical_quantity,
-        "销售端与医保端比对",
+        "销售医保药品串换疑点筛查",
         "",
     ),
     "medical_price": (
         "医保端",
         "医保单价",
         ColumnConfig.medical_price,
-        "销售端与医保端比对",
+        "销售医保药品串换疑点筛查",
         "",
     ),
     "medical_amount": (
         "医保端",
         "医保金额",
         ColumnConfig.medical_amount,
-        "销售端与医保端比对",
+        "销售医保药品串换疑点筛查、医保销售明细筛查",
         "",
     ),
     "medical_settlement_time": (
         "医保端",
         "医保结算时间",
         ColumnConfig.medical_settlement_time,
-        "销售端与医保端比对、处方端与医保端比对",
+        "销售医保药品串换疑点筛查、医保销售明细筛查、处方端与医保端比对",
         "",
     ),
     "medical_person_name": (
@@ -430,6 +473,32 @@ def load_compare_medical_data(input_path: Path, column_config: ColumnConfig) -> 
 
     df = _read_csv_with_common_encodings(input_path)
     validate_required_columns(df, column_config.medical_compare_required_columns)
+    return df
+
+
+def load_sales_detail_screen_data(
+    input_path: Path,
+    column_config: ColumnConfig,
+) -> pd.DataFrame:
+    """Load the sales workbook used by the medical sales detail screen."""
+    if not input_path.exists():
+        raise FileNotFoundError(f"未找到销售端文件：{input_path}")
+
+    df = pd.read_excel(input_path)
+    validate_required_columns(df, column_config.sales_detail_screen_required_columns)
+    return df
+
+
+def load_medical_detail_screen_data(
+    input_path: Path,
+    column_config: ColumnConfig,
+) -> pd.DataFrame:
+    """Load the medical CSV used by the medical sales detail screen."""
+    if not input_path.exists():
+        raise FileNotFoundError(f"未找到医保端文件：{input_path}")
+
+    df = _read_csv_with_common_encodings(input_path)
+    validate_required_columns(df, column_config.medical_detail_screen_required_columns)
     return df
 
 
@@ -667,6 +736,293 @@ def _bill_product_similarity(
     for medical_name in medical_names:
         scores.append(max(_product_similarity(medical_name, sales_name) for sales_name in sales_names))
     return sum(scores) / len(scores)
+
+
+def _build_detail_match_groups(
+    df: pd.DataFrame,
+    name_column: str,
+    time_column: str,
+    amount_column: str,
+) -> list[DetailMatchGroup]:
+    """Group same-name rows whose timestamps are no more than one minute apart."""
+    working_rows = []
+    parsed_times = _date_series(df[time_column])
+    numeric_amounts = _numeric_series(df[amount_column])
+    for source_order, row_index in enumerate(df.index):
+        name = _text_value(df.at[row_index, name_column])
+        working_rows.append(
+            {
+                "row_index": row_index,
+                "source_order": source_order,
+                "name": name,
+                "normalized_name": _normalize_product_name(name),
+                "event_time": parsed_times.at[row_index],
+                "amount": numeric_amounts.at[row_index],
+            }
+        )
+
+    rows_by_name: dict[str, list[dict[str, object]]] = {}
+    for row in working_rows:
+        rows_by_name.setdefault(str(row["name"]), []).append(row)
+
+    groups: list[DetailMatchGroup] = []
+    tolerance = pd.Timedelta(minutes=DETAIL_GROUP_TIME_TOLERANCE_MINUTES)
+    for same_name_rows in rows_by_name.values():
+        valid_rows = [row for row in same_name_rows if not pd.isna(row["event_time"])]
+        invalid_rows = [row for row in same_name_rows if pd.isna(row["event_time"])]
+        valid_rows.sort(
+            key=lambda row: (
+                pd.Timestamp(row["event_time"]),
+                int(row["source_order"]),
+            )
+        )
+
+        grouped_rows: list[list[dict[str, object]]] = []
+        current_group: list[dict[str, object]] = []
+        group_start: pd.Timestamp | None = None
+        for row in valid_rows:
+            row_time = pd.Timestamp(row["event_time"])
+            if group_start is None or row_time - group_start <= tolerance:
+                current_group.append(row)
+                group_start = group_start or row_time
+            else:
+                grouped_rows.append(current_group)
+                current_group = [row]
+                group_start = row_time
+        if current_group:
+            grouped_rows.append(current_group)
+        grouped_rows.extend([[row] for row in invalid_rows])
+
+        for grouped in grouped_rows:
+            valid_amounts = [
+                float(row["amount"])
+                for row in grouped
+                if not pd.isna(row["amount"])
+            ]
+            first_row = min(grouped, key=lambda row: int(row["source_order"]))
+            valid_group_times = [
+                pd.Timestamp(row["event_time"])
+                for row in grouped
+                if not pd.isna(row["event_time"])
+            ]
+            groups.append(
+                DetailMatchGroup(
+                    name=str(first_row["name"]),
+                    normalized_name=str(first_row["normalized_name"]),
+                    event_time=min(valid_group_times) if valid_group_times else pd.NaT,
+                    total_amount=sum(valid_amounts) if valid_amounts else float("nan"),
+                    row_indices=tuple(row["row_index"] for row in grouped),
+                    source_order=int(first_row["source_order"]),
+                )
+            )
+
+    return sorted(groups, key=lambda group: group.source_order)
+
+
+def _find_best_detail_group_match(
+    medical_group: DetailMatchGroup,
+    sales_groups: list[DetailMatchGroup],
+    sales_amount_index: dict[int, list[int]],
+    used_sales_group_indices: set[int],
+    *,
+    amount_tolerance: float,
+    time_tolerance_hours: float,
+) -> tuple[int, float, float] | None:
+    if (
+        not medical_group.normalized_name
+        or pd.isna(medical_group.event_time)
+        or pd.isna(medical_group.total_amount)
+    ):
+        return None
+
+    center_cents = round(float(medical_group.total_amount) * 100)
+    tolerance_cents = max(0, round(amount_tolerance * 100))
+    candidate_group_indices = {
+        sales_group_index
+        for amount_cents in range(
+            center_cents - tolerance_cents,
+            center_cents + tolerance_cents + 1,
+        )
+        for sales_group_index in sales_amount_index.get(amount_cents, [])
+    }
+
+    candidates: list[tuple[int, float, float, float, int]] = []
+    for sales_group_index in candidate_group_indices:
+        sales_group = sales_groups[sales_group_index]
+        if sales_group_index in used_sales_group_indices:
+            continue
+        if pd.isna(sales_group.event_time) or pd.isna(sales_group.total_amount):
+            continue
+
+        product_similarity = _product_similarity(
+            medical_group.name,
+            sales_group.name,
+        )
+        if product_similarity < DETAIL_PRODUCT_SIMILARITY_THRESHOLD:
+            continue
+        amount_difference = _safe_abs_diff(
+            medical_group.total_amount,
+            sales_group.total_amount,
+        )
+        if amount_difference > amount_tolerance:
+            continue
+        time_difference_hours = _time_distance_hours(
+            medical_group.event_time,
+            sales_group.event_time,
+        )
+        if time_difference_hours > time_tolerance_hours:
+            continue
+        candidates.append(
+            (
+                sales_group_index,
+                product_similarity,
+                amount_difference,
+                time_difference_hours,
+                sales_group.source_order,
+            )
+        )
+
+    if not candidates:
+        return None
+    best = min(
+        candidates,
+        key=lambda candidate: (
+            -candidate[1],
+            candidate[2],
+            candidate[3],
+            candidate[4],
+        ),
+    )
+    return best[0], best[2], best[3]
+
+
+def _detail_group_amount_index(
+    groups: list[DetailMatchGroup],
+) -> dict[int, list[int]]:
+    index: dict[int, list[int]] = {}
+    for group_index, group in enumerate(groups):
+        if pd.isna(group.total_amount):
+            continue
+        amount_cents = round(float(group.total_amount) * 100)
+        index.setdefault(amount_cents, []).append(group_index)
+    return index
+
+
+def screen_medical_sales_details(
+    medical_df: pd.DataFrame,
+    sales_df: pd.DataFrame,
+    column_config: ColumnConfig,
+) -> tuple[pd.DataFrame, int, int, int]:
+    """Match grouped medical details to grouped sales details and mark each medical row."""
+    validate_required_columns(
+        medical_df,
+        column_config.medical_detail_screen_required_columns,
+    )
+    validate_required_columns(
+        sales_df,
+        column_config.sales_detail_screen_required_columns,
+    )
+
+    result_df = medical_df.copy()
+    for column in DETAIL_SCREEN_OUTPUT_COLUMNS:
+        result_df[column] = ""
+    result_df["比对结果"] = MATCH_STATUS_UNMATCHED
+
+    medical_groups = _build_detail_match_groups(
+        medical_df,
+        column_config.medical_product_name,
+        column_config.medical_settlement_time,
+        column_config.medical_amount,
+    )
+    sales_groups = _build_detail_match_groups(
+        sales_df,
+        column_config.sales_product_name,
+        column_config.sales_bill_date,
+        column_config.sales_price,
+    )
+    sales_amount_index = _detail_group_amount_index(sales_groups)
+    used_sales_group_indices: set[int] = set()
+    matched_medical_group_indices: set[int] = set()
+
+    def apply_match(
+        medical_group_index: int,
+        sales_group_index: int,
+        amount_difference: float,
+        status: str,
+    ) -> None:
+        medical_group = medical_groups[medical_group_index]
+        sales_group = sales_groups[sales_group_index]
+        time_difference = _format_time_difference(
+            medical_group.event_time,
+            sales_group.event_time,
+        )
+        for row_index in medical_group.row_indices:
+            result_df.at[row_index, "比对结果"] = status
+            result_df.at[row_index, "比对时间差"] = time_difference
+            result_df.at[row_index, "比对金额差"] = round(amount_difference, 2)
+        used_sales_group_indices.add(sales_group_index)
+        matched_medical_group_indices.add(medical_group_index)
+
+    for medical_group_index, medical_group in enumerate(medical_groups):
+        match = _find_best_detail_group_match(
+            medical_group,
+            sales_groups,
+            sales_amount_index,
+            used_sales_group_indices,
+            amount_tolerance=DETAIL_EXACT_AMOUNT_TOLERANCE,
+            time_tolerance_hours=DETAIL_EXACT_TIME_TOLERANCE_HOURS,
+        )
+        if match is not None:
+            sales_group_index, amount_difference, _ = match
+            apply_match(
+                medical_group_index,
+                sales_group_index,
+                amount_difference,
+                MATCH_STATUS_EXACT,
+            )
+        _show_progress(
+            "医保销售明细完全匹配进度",
+            medical_group_index + 1,
+            len(medical_groups),
+        )
+
+    unmatched_group_indices = [
+        index
+        for index in range(len(medical_groups))
+        if index not in matched_medical_group_indices
+    ]
+    for progress_index, medical_group_index in enumerate(
+        unmatched_group_indices,
+        start=1,
+    ):
+        match = _find_best_detail_group_match(
+            medical_groups[medical_group_index],
+            sales_groups,
+            sales_amount_index,
+            used_sales_group_indices,
+            amount_tolerance=DETAIL_INCOMPLETE_AMOUNT_TOLERANCE,
+            time_tolerance_hours=DETAIL_INCOMPLETE_TIME_TOLERANCE_HOURS,
+        )
+        if match is not None:
+            sales_group_index, amount_difference, _ = match
+            apply_match(
+                medical_group_index,
+                sales_group_index,
+                amount_difference,
+                MATCH_STATUS_INCOMPLETE,
+            )
+        _show_progress(
+            "医保销售明细不完全匹配进度",
+            progress_index,
+            len(unmatched_group_indices),
+        )
+
+    exact_rows = int((result_df["比对结果"] == MATCH_STATUS_EXACT).sum())
+    incomplete_rows = int(
+        (result_df["比对结果"] == MATCH_STATUS_INCOMPLETE).sum()
+    )
+    unmatched_rows = int((result_df["比对结果"] == MATCH_STATUS_UNMATCHED).sum())
+    return result_df, exact_rows, incomplete_rows, unmatched_rows
 
 
 def _amount_index_candidates(
@@ -1024,7 +1380,7 @@ def _find_best_prescription_match(
     medical_row: pd.Series,
     medical_time: pd.Timestamp,
     prescription_lookup: dict[str, pd.DataFrame],
-    used_prescription_indices: set[object],
+    prescription_event_assignments: dict[object, tuple[str, pd.Timestamp]],
     column_config: ColumnConfig,
 ) -> object | None:
     medical_person_name = _text_value(medical_row[column_config.medical_person_name])
@@ -1037,8 +1393,13 @@ def _find_best_prescription_match(
     if person_prescriptions is None or person_prescriptions.empty:
         return None
 
+    medical_event = (medical_person_name, pd.Timestamp(medical_time))
     available_prescriptions = person_prescriptions[
-        ~person_prescriptions.index.isin(used_prescription_indices)
+        [
+            prescription_index not in prescription_event_assignments
+            or prescription_event_assignments[prescription_index] == medical_event
+            for prescription_index in person_prescriptions.index
+        ]
     ]
     if available_prescriptions.empty:
         return None
@@ -1138,7 +1499,7 @@ def compare_prescriptions_to_medical(
         prescription_times,
         column_config,
     )
-    used_prescription_indices: set[object] = set()
+    prescription_event_assignments: dict[object, tuple[str, pd.Timestamp]] = {}
     normal_rows = 0
     after_medicine_rows = 0
 
@@ -1151,15 +1512,21 @@ def compare_prescriptions_to_medical(
             medical_row,
             medical_times.at[medical_index], # type: ignore
             prescription_lookup,
-            used_prescription_indices,
+            prescription_event_assignments,
             column_config,
         )
         if prescription_index is None:
             _show_progress("处方医保比对进度", progress_index, total_medical_rows)
             continue
 
-        used_prescription_indices.add(prescription_index)
         medical_time = medical_times.at[medical_index]
+        medical_person_name = _text_value(
+            medical_row[column_config.medical_person_name]
+        )
+        prescription_event_assignments.setdefault(
+            prescription_index,
+            (medical_person_name, pd.Timestamp(medical_time)), # type: ignore
+        )
         prescription_time = prescription_times.at[prescription_index]
         result_df.at[medical_index, "处方端门诊号"] = prescription_df.at[
             prescription_index,
@@ -1434,7 +1801,7 @@ def run_sales_medical_compare(
     output_path: Path,
     column_config_path: Path,
 ) -> SalesMedicalCompareResult:
-    """Compare sales-side orders with medical-side visit IDs and save the result."""
+    """Run the sales/medical drug-switching suspicion screen."""
     print("正在读取销售端、医保端及列名配置文件...", flush=True)
     column_config = load_column_config(column_config_path)
     sales_df = load_compare_sales_data(sales_input_path, column_config)
@@ -1570,6 +1937,40 @@ def run_sales_medical_compare(
     )
 
 
+def run_medical_sales_detail_screen(
+    sales_input_path: Path,
+    medical_input_path: Path,
+    output_path: Path,
+    column_config_path: Path,
+) -> MedicalSalesDetailScreenResult:
+    """Screen every medical detail row against grouped sales-side details."""
+    print("正在读取医保端、销售端及列名配置文件...", flush=True)
+    column_config = load_column_config(column_config_path)
+    sales_df = load_sales_detail_screen_data(sales_input_path, column_config)
+    medical_df = load_medical_detail_screen_data(medical_input_path, column_config)
+    print(
+        f"文件读取完成，共 {len(medical_df)} 条医保明细，开始分组匹配。",
+        flush=True,
+    )
+    result_df, exact_rows, incomplete_rows, unmatched_rows = (
+        screen_medical_sales_details(
+            medical_df,
+            sales_df,
+            column_config,
+        )
+    )
+    print("医保销售明细筛查完成，正在写入结果文件...", flush=True)
+    result_df.to_csv(output_path, index=False, encoding="utf-8-sig")
+    print("结果文件写入完成。", flush=True)
+    return MedicalSalesDetailScreenResult(
+        output_path=output_path,
+        total_rows=len(result_df),
+        exact_rows=exact_rows,
+        incomplete_rows=incomplete_rows,
+        unmatched_rows=unmatched_rows,
+    )
+
+
 def run_prescription_medical_compare(
     prescription_input_path: Path,
     medical_input_path: Path,
@@ -1623,8 +2024,9 @@ def print_menu() -> None:
     print("查宝（药店版）命令行工具")
     print("1. 生成列名配置表")
     print("2. 退货冲销检查")
-    print("3. 销售端与医保端比对")
-    print("4. 处方端医保端比对")
+    print("3. 销售医保药品串换疑点筛查")
+    print("4. 医保销售明细筛查")
+    print("5. 处方端医保端比对")
     print("0. 退出")
 
 
@@ -1681,7 +2083,7 @@ def main() -> None:
                 print(f"执行失败：{exc}")
                 continue
 
-            print("销售端与医保端比对完成")
+            print("销售医保药品串换疑点筛查完成")
             print(f"医保端编号数：{result.medical_bill_count}")
             print(f"已匹配编号数：{result.matched_bill_count}")
             print(f"不完全匹配编号数：{result.incomplete_matched_bill_count}")
@@ -1690,6 +2092,40 @@ def main() -> None:
             print(f"输出行数：{result.output_rows}")
             print(f"输出文件：{result.output_path}")
         elif choice == "4":
+            sales_input_path = prompt_path(
+                "请输入销售端 Excel 文件路径",
+                DEFAULT_COMPARE_SALES_FILE,
+            )
+            medical_input_path = prompt_path(
+                "请输入医保端 CSV 文件路径",
+                DEFAULT_COMPARE_MEDICAL_FILE,
+            )
+            output_path = prompt_path(
+                "请输入输出 CSV 文件路径",
+                DEFAULT_DETAIL_SCREEN_OUTPUT_FILE,
+            )
+            column_config_path = prompt_path(
+                "请输入列名配置 Excel 文件路径",
+                DEFAULT_COLUMN_CONFIG_FILE,
+            )
+            try:
+                result = run_medical_sales_detail_screen(
+                    sales_input_path,
+                    medical_input_path,
+                    output_path,
+                    column_config_path,
+                )
+            except Exception as exc:
+                print(f"执行失败：{exc}")
+                continue
+
+            print("医保销售明细筛查完成")
+            print(f"医保端总行数：{result.total_rows}")
+            print(f"完全匹配行数：{result.exact_rows}")
+            print(f"不完全匹配行数：{result.incomplete_rows}")
+            print(f"未匹配行数：{result.unmatched_rows}")
+            print(f"输出文件：{result.output_path}")
+        elif choice == "5":
             prescription_input_path = prompt_path(
                 "请输入处方明细 Excel 文件路径",
                 DEFAULT_PRESCRIPTION_FILE,
